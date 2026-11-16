@@ -3,6 +3,7 @@
 모든 민감 정보는 GitHub Secrets → 환경 변수로만 받습니다.
 """
 import os
+import base64
 import random
 import re
 import sys
@@ -11,7 +12,7 @@ import time
 import oci
 
 REGION = os.environ.get("OCI_REGION", "ap-osaka-1")
-TENANCY = os.environ["OCI_TENANCY"]
+TENANCY = os.environ["OCI_TENANCY"].strip().removeprefix("tenancy=").strip()
 COMPARTMENT = os.environ.get("OCI_COMPARTMENT") or TENANCY
 SUBNET_NAME = os.environ.get("SUBNET_NAME", "public subnet-busanfood-vcn")
 OCPUS = float(os.environ.get("OCPUS", "2"))        # 2026-06 이후 무료 한도: 2 OCPU / 12GB
@@ -37,14 +38,25 @@ def normalize_pem(raw):
         print(f"[key] 본문 중간에 '=' {core.count('=')}개 — 제거 후 재시도", flush=True)
         core = core.replace("=", "")
     core += "=" * (-len(core) % 4)
+    try:
+        der = base64.b64decode(core)
+        if len(der) > 4 and der[0] == 0x30 and der[1] == 0x82:
+            declared = 4 + (der[2] << 8 | der[3])
+            print(f"[key] 디코딩 {len(der)}바이트 / 선언 길이 {declared}바이트", flush=True)
+            if len(der) > declared:
+                der = der[:declared]
+                core = base64.b64encode(der).decode()
+                print("[key] 끝에 붙은 여분 데이터 제거", flush=True)
+    except Exception as e:  # noqa: BLE001
+        print(f"[key] base64 디코딩 실패: {type(e).__name__}", flush=True)
     lines = "\n".join(core[i:i + 64] for i in range(0, len(core), 64))
     print(f"[key] {kind} 본문 길이={len(core)}", flush=True)
     return f"-----BEGIN {kind}-----\n{lines}\n-----END {kind}-----\n"
 
 config = {
-    "user": os.environ["OCI_USER"],
+    "user": os.environ["OCI_USER"].strip().removeprefix("user=").strip(),
     "tenancy": TENANCY,
-    "fingerprint": os.environ["OCI_FINGERPRINT"],
+    "fingerprint": os.environ["OCI_FINGERPRINT"].strip().removeprefix("fingerprint=").strip(),
     "key_content": normalize_pem(os.environ["OCI_KEY"]),
     "region": REGION,
 }
