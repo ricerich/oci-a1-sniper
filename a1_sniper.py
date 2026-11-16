@@ -4,6 +4,7 @@
 """
 import os
 import random
+import re
 import sys
 import time
 
@@ -20,11 +21,31 @@ ATTEMPTS = int(os.environ.get("ATTEMPTS", "8"))     # 한 번 실행에서 시�
 INTERVAL = int(os.environ.get("INTERVAL", "60"))    # 시도 간격(초)
 SHAPE = "VM.Standard.A1.Flex"
 
+
+def normalize_pem(raw):
+    """붙여넣기 과정에서 깨진 PEM(줄바꿈·공백·CR·패딩)을 정리합니다. 키 내용은 출력하지 않습니다."""
+    raw = raw.replace("\\n", "\n").replace("\r", "")
+    blocks = re.findall(r"-----BEGIN ([A-Z ]+)-----(.*?)-----END \1-----", raw, re.S)
+    print(f"[key] BEGIN 블록 수={len(blocks)} 종류={[b[0] for b in blocks]}", flush=True)
+    priv = [b for b in blocks if "PRIVATE" in b[0]]
+    if not priv:
+        return raw
+    kind, body = priv[0]
+    body = re.sub(r"[^A-Za-z0-9+/=]", "", body)
+    core = body.rstrip("=")
+    if "=" in core:
+        print(f"[key] 본문 중간에 '=' {core.count('=')}개 — 제거 후 재시도", flush=True)
+        core = core.replace("=", "")
+    core += "=" * (-len(core) % 4)
+    lines = "\n".join(core[i:i + 64] for i in range(0, len(core), 64))
+    print(f"[key] {kind} 본문 길이={len(core)}", flush=True)
+    return f"-----BEGIN {kind}-----\n{lines}\n-----END {kind}-----\n"
+
 config = {
     "user": os.environ["OCI_USER"],
     "tenancy": TENANCY,
     "fingerprint": os.environ["OCI_FINGERPRINT"],
-    "key_content": os.environ["OCI_KEY"],
+    "key_content": normalize_pem(os.environ["OCI_KEY"]),
     "region": REGION,
 }
 oci.config.validate_config(config)
