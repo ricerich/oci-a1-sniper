@@ -1,0 +1,46 @@
+name: OCI A1 Sniper (Osaka)
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"   # 10분마다(GitHub 사정에 따라 지연될 수 있음)
+  workflow_dispatch: {}
+
+concurrency:
+  group: a1-sniper
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  issues: write
+  actions: write
+
+jobs:
+  launch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - run: pip install -q -r requirements.txt
+      - id: sniper
+        env:
+          OCI_USER: ${{ secrets.OCI_USER }}
+          OCI_TENANCY: ${{ secrets.OCI_TENANCY }}
+          OCI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
+          OCI_KEY: ${{ secrets.OCI_KEY }}
+          SSH_PUBLIC_KEY: ${{ secrets.SSH_PUBLIC_KEY }}
+        run: python a1_sniper.py
+
+      # 성공하면 이슈로 알림(GitHub 메일 알림) + 워크플로 자동 비활성화
+      - if: steps.sniper.outputs.created == 'yes' || steps.sniper.outputs.created == 'already'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue create --repo "$GITHUB_REPOSITORY" \
+            --title "🎉 오사카 A1 인스턴스 확보" \
+            --body "OCI 콘솔 > 컴퓨트 > 인스턴스에서 osaka-a1 의 공인 IP를 확인하세요. 접속: ssh -i ~/.ssh/id_ed25519 ubuntu@<공인IP>" || true
+          gh workflow disable a1-sniper.yml --repo "$GITHUB_REPOSITORY"
